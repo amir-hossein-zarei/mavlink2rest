@@ -119,27 +119,19 @@ pub async fn helper_mavlink(
 ) -> actix_web::Result<HttpResponse> {
     let message_name = query.into_inner().name;
 
-    let result = match mavlink::ardupilotmega::MavMessage::message_id_from_name(&message_name) {
-        Ok(id) => mavlink::Message::default_message_from_id(id),
-        Err(error) => Err(error),
+    let result: Result<mavlink::ardupilotmega::MavMessage, &str> =
+        match mavlink::ardupilotmega::MavMessage::message_id_from_name(&message_name) {
+            Ok(id) => mavlink::Message::default_message_from_id(id),
+            Err(error) => Err(error),
     };
 
     match result {
-        Ok(result) => {
-            let msg = match result {
-                mavlink::ardupilotmega::MavMessage::common(msg) => {
-                    parse_query(&data::MAVLinkMessage {
-                        header: mavlink::MavHeader::default(),
-                        message: msg,
-                    })
-                }
-                msg => parse_query(&data::MAVLinkMessage {
-                    header: mavlink::MavHeader::default(),
-                    message: msg,
-                }),
-            };
-
-            ok_response(msg).await
+        Ok(msg) => {
+            let result = parse_query(&data::MAVLinkMessage {
+                header: mavlink::MavHeader::default(),
+                message: msg,
+            });
+            ok_response(result).await
         }
         Err(content) => not_found_response(parse_query(&content)).await,
     }
@@ -176,31 +168,10 @@ pub async fn mavlink_post(
         },
         Err(err) => {
             debug!("Failed to parse ardupilotmega message: {err:?}");
-        }
-    }
-
-    match json5::from_str::<data::MAVLinkMessage<mavlink::common::MavMessage>>(&json_string) {
-        Ok(content) => {
-            let content_ardupilotmega = mavlink::ardupilotmega::MavMessage::common(content.message);
-            match data
-                .lock()
-                .unwrap()
-                .send(&content.header, &content_ardupilotmega)
-            {
-                Ok(_result) => {
-                    data::update((content.header, content_ardupilotmega));
-                    return HttpResponse::Ok().await;
-                }
-                Err(err) => {
-                    return not_found_response(format!("Failed to send message: {err:?}")).await;
-                }
-            }
-        }
-        Err(err) => {
-            let error_message =
-                format!("Failed to parse message, not a valid MAVLinkMessage: {err:?}");
-            debug!("{error_message}");
-            return not_found_response(error_message).await;
+            not_found_response(String::from(
+                "Failed to parse message, not a valid MAVLinkMessage.",
+            ))
+            .await
         }
     }
 }

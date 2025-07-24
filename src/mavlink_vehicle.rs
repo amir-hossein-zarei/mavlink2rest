@@ -2,17 +2,17 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use log::*;
 
-pub type MAVLinkVehicleArcMutex = Arc<Mutex<MAVLinkVehicle<mavlink::ardupilotmega::MavMessage>>>;
+pub type MAVLinkVehicleArcMutex = Arc<Mutex<MAVLinkVehicle>>;
 
 #[derive(Clone)]
-pub struct MAVLinkVehicle<M: mavlink::Message> {
+pub struct MAVLinkVehicle {
     //TODO: Check if Arc<Box can be only Arc or Box
-    vehicle: Arc<Box<dyn mavlink::MavConnection<M> + Sync + Send>>,
+    vehicle: Arc<Box<dyn mavlink::MavConnection<mavlink::ardupilotmega::MavMessage> + Sync + Send>>,
     header: Arc<Mutex<mavlink::MavHeader>>,
 }
 
-impl<M: mavlink::Message> MAVLinkVehicle<M> {
-    pub fn send(&self, header: &mavlink::MavHeader, message: &M) -> std::io::Result<usize> {
+impl MAVLinkVehicle {
+    pub fn send(&self, header: &mavlink::MavHeader, message: &mavlink::ardupilotmega::MavMessage) -> std::io::Result<usize> {
         let result = self.vehicle.send(header, message);
 
         // Convert from mavlink error to io error
@@ -24,16 +24,16 @@ impl<M: mavlink::Message> MAVLinkVehicle<M> {
 }
 
 #[allow(dead_code)]
-pub struct MAVLinkVehicleHandle<M: mavlink::Message> {
+pub struct MAVLinkVehicleHandle {
     //TODO: Check if we can use vehicle here directly
-    pub mavlink_vehicle: Arc<Mutex<MAVLinkVehicle<M>>>,
+    pub mavlink_vehicle: Arc<Mutex<MAVLinkVehicle>>,
     heartbeat_thread: std::thread::JoinHandle<()>,
     receive_message_thread: std::thread::JoinHandle<()>,
     //TODO: Add a channel for errors
-    pub thread_rx_channel: std::sync::mpsc::Receiver<(mavlink::MavHeader, M)>,
+    pub thread_rx_channel: std::sync::mpsc::Receiver<(mavlink::MavHeader, mavlink::ardupilotmega::MavMessage)>,
 }
 
-impl<M: mavlink::Message> MAVLinkVehicle<M> {
+impl MAVLinkVehicle {
     fn new(
         mavlink_connection_string: &str,
         version: mavlink::MavlinkVersion,
@@ -55,9 +55,7 @@ impl<M: mavlink::Message> MAVLinkVehicle<M> {
     }
 }
 
-impl<
-        M: 'static + mavlink::Message + std::fmt::Debug + From<mavlink::common::MavMessage> + Send,
-    > MAVLinkVehicleHandle<M>
+impl MAVLinkVehicleHandle
 {
     pub fn new(
         connection_string: &str,
@@ -66,8 +64,8 @@ impl<
         component_id: u8,
         send_initial_heartbeats: bool,
     ) -> Self {
-        let mavlink_vehicle: Arc<Mutex<MAVLinkVehicle<M>>> = Arc::new(Mutex::new(
-            MAVLinkVehicle::<M>::new(connection_string, version, system_id, component_id),
+        let mavlink_vehicle: Arc<Mutex<MAVLinkVehicle>> = Arc::new(Mutex::new(
+            MAVLinkVehicle::new(connection_string, version, system_id, component_id),
         ));
 
         // PX4 requires a initial heartbeat to be sent to wake up the connection, otherwise it will
@@ -88,7 +86,7 @@ impl<
         let heartbeat_mavlink_vehicle = mavlink_vehicle.clone();
         let receive_message_mavlink_vehicle = mavlink_vehicle.clone();
 
-        let (tx_channel, rx_channel) = mpsc::channel::<(mavlink::MavHeader, M)>();
+        let (tx_channel, rx_channel) = mpsc::channel::<(mavlink::MavHeader, mavlink::ardupilotmega::MavMessage)>();
 
         Self {
             mavlink_vehicle,
@@ -101,11 +99,9 @@ impl<
     }
 }
 
-fn receive_message_loop<
-    M: mavlink::Message + std::fmt::Debug + From<mavlink::common::MavMessage>,
->(
-    mavlink_vehicle: Arc<Mutex<MAVLinkVehicle<M>>>,
-    channel: std::sync::mpsc::Sender<(mavlink::MavHeader, M)>,
+fn receive_message_loop(
+    mavlink_vehicle: Arc<Mutex<MAVLinkVehicle>>,
+    channel: std::sync::mpsc::Sender<(mavlink::MavHeader, mavlink::ardupilotmega::MavMessage)>,
 ) {
     let mavlink_vehicle = mavlink_vehicle.as_ref().lock().unwrap();
 
@@ -132,8 +128,8 @@ fn receive_message_loop<
     }
 }
 
-fn send_heartbeat<M: mavlink::Message + From<mavlink::common::MavMessage>>(
-    mavlink_vehicle: Arc<Mutex<MAVLinkVehicle<M>>>,
+fn send_heartbeat(
+    mavlink_vehicle: Arc<Mutex<MAVLinkVehicle>>,
 ) {
     let mavlink_vehicle = mavlink_vehicle.as_ref().lock().unwrap();
     let vehicle = mavlink_vehicle.vehicle.clone();
@@ -144,8 +140,8 @@ fn send_heartbeat<M: mavlink::Message + From<mavlink::common::MavMessage>>(
     header.sequence = header.sequence.wrapping_add(1);
 }
 
-fn heartbeat_loop<M: mavlink::Message + From<mavlink::common::MavMessage>>(
-    mavlink_vehicle: Arc<Mutex<MAVLinkVehicle<M>>>,
+fn heartbeat_loop(
+    mavlink_vehicle: Arc<Mutex<MAVLinkVehicle>>,
 ) {
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -153,13 +149,13 @@ fn heartbeat_loop<M: mavlink::Message + From<mavlink::common::MavMessage>>(
     }
 }
 
-pub fn heartbeat_message() -> mavlink::common::MavMessage {
-    mavlink::common::MavMessage::HEARTBEAT(mavlink::common::HEARTBEAT_DATA {
+pub fn heartbeat_message() -> mavlink::ardupilotmega::MavMessage {
+    mavlink::ardupilotmega::MavMessage::HEARTBEAT(mavlink::ardupilotmega::HEARTBEAT_DATA {
         custom_mode: 0,
-        mavtype: mavlink::common::MavType::MAV_TYPE_ONBOARD_CONTROLLER,
-        autopilot: mavlink::common::MavAutopilot::MAV_AUTOPILOT_INVALID,
-        base_mode: mavlink::common::MavModeFlag::default(),
-        system_status: mavlink::common::MavState::MAV_STATE_STANDBY,
+        mavtype: mavlink::ardupilotmega::MavType::MAV_TYPE_ONBOARD_CONTROLLER,
+        autopilot: mavlink::ardupilotmega::MavAutopilot::MAV_AUTOPILOT_INVALID,
+        base_mode: mavlink::ardupilotmega::MavModeFlag::default(),
+        system_status: mavlink::ardupilotmega::MavState::MAV_STATE_STANDBY,
         mavlink_version: 0x3,
     })
 }
